@@ -24,6 +24,7 @@ import android.text.TextUtils;
 
 import java.io.IOException;
 import java.lang.ref.ReferenceQueue;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,25 @@ import okhttp3.internal.http2.Header;
  * ================================================
  */
 public final class ProgressManager {
+    private static final String OKHTTP_PACKAGE_NAME = "okhttp3.OkHttpClient";
+    private static final boolean DEPENDENCY_OKHTTP;
+    private static final int DEFAULT_REFRESH_TIME = 150;
+    private static final String IDENTIFICATION_NUMBER = "?JessYan=";
+    private static final String IDENTIFICATION_HEADER = "JessYan";
+    private static final String LOCATION_HEADER = "Location";
+    private static volatile ProgressManager mProgressManager;
+
+    static {
+        boolean hasDependency;
+        try {
+            Class.forName(OKHTTP_PACKAGE_NAME);
+            hasDependency = true;
+        } catch (ClassNotFoundException e) {
+            hasDependency = false;
+        }
+        DEPENDENCY_OKHTTP = hasDependency;
+    }
+
     /**
      * 因为 {@link WeakHashMap} 将 {@code key} 作为弱键 (弱引用的键), 所以当 java 虚拟机 GC 时会将某个不在被引用的 {@code key} 回收并加入 {@link ReferenceQueue}
      * 在下一次操作 {@link WeakHashMap} 时,会比对 {@link ReferenceQueue} 中的 {@code key}
@@ -66,27 +86,6 @@ public final class ProgressManager {
     private final Handler mHandler; //所有监听器在 Handler 中被执行,所以可以保证所有监听器在主线程中被执行
     private final Interceptor mInterceptor;
     private int mRefreshTime = DEFAULT_REFRESH_TIME; //进度刷新时间(单位ms),避免高频率调用
-
-    private static volatile ProgressManager mProgressManager;
-
-    private static final String OKHTTP_PACKAGE_NAME = "okhttp3.OkHttpClient";
-    private static final boolean DEPENDENCY_OKHTTP;
-    private static final int DEFAULT_REFRESH_TIME = 150;
-    private static final String IDENTIFICATION_NUMBER = "?JessYan=";
-    private static final String IDENTIFICATION_HEADER = "JessYan";
-    private static final String LOCATION_HEADER = "Location";
-
-
-    static {
-        boolean hasDependency;
-        try {
-            Class.forName(OKHTTP_PACKAGE_NAME);
-            hasDependency = true;
-        } catch (ClassNotFoundException e) {
-            hasDependency = false;
-        }
-        DEPENDENCY_OKHTTP = hasDependency;
-    }
 
 
     private ProgressManager() {
@@ -114,6 +113,12 @@ public final class ProgressManager {
         return mProgressManager;
     }
 
+    static <T> T checkNotNull(T object, String message) {
+        if (object == null) {
+            throw new NullPointerException(message);
+        }
+        return object;
+    }
 
     /**
      * 设置 {@link ProgressListener#onProgress(ProgressInfo)} 每次被调用的间隔时间
@@ -145,6 +150,30 @@ public final class ProgressManager {
         progressListeners.add(listener);
     }
 
+    public void removeRequestListener(String url) {
+        checkNotNull(url, "url cannot be null");
+        synchronized (ProgressManager.class) {
+            mRequestListeners.remove(url);
+        }
+    }
+
+    public void removeRequestListener(ProgressListener listener) {
+        checkNotNull(listener, "listener cannot be null");
+        synchronized (ProgressManager.class) {
+
+            Iterator<Map.Entry<String, List<ProgressListener>>> it = mRequestListeners.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<String, List<ProgressListener>> pair = it.next();
+                List progressListeners = pair.getValue();
+
+                progressListeners.remove(listener);
+
+                if (progressListeners.isEmpty())
+                    it.remove(); // avoids a ConcurrentModificationException
+            }
+        }
+    }
+
     /**
      * 将需要被监听下载进度的 {@code url} 注册到管理器,此操作请在页面初始化时进行,切勿多次注册同一个(内容相同)监听器
      *
@@ -165,17 +194,40 @@ public final class ProgressManager {
         progressListeners.add(listener);
     }
 
+    public void removeResponseListener(String url) {
+        checkNotNull(url, "url cannot be null");
+        synchronized (ProgressManager.class) {
+            mResponseListeners.remove(url);
+        }
+    }
+
+    public void removeResponseListener(ProgressListener listener) {
+        checkNotNull(listener, "listener cannot be null");
+        synchronized (ProgressManager.class) {
+
+            Iterator<Map.Entry<String, List<ProgressListener>>> it = mResponseListeners.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<String, List<ProgressListener>> pair = it.next();
+                List progressListeners = pair.getValue();
+
+                progressListeners.remove(listener);
+
+                if (progressListeners.isEmpty())
+                    it.remove(); // avoids a ConcurrentModificationException
+            }
+        }
+    }
 
     /**
      * 当在 {@link ProgressRequestBody} 和 {@link ProgressResponseBody} 内部处理二进制流时发生错误
      * 会主动调用 {@link ProgressListener#onError(long, Exception)},但是有些错误并不是在它们内部发生的
-     * 但同样会引起网络请求的失败,所以向外面提供{@link ProgressManager#notifyOnErorr},当外部发生错误时
+     * 但同样会引起网络请求的失败,所以向外面提供{@link ProgressManager#notifyOnError},当外部发生错误时
      * 手动调用此方法,以通知所有的监听器
      *
      * @param url {@code url} 作为标识符
      * @param e   错误
      */
-    public void notifyOnErorr(String url, Exception e) {
+    public void notifyOnError(String url, Exception e) {
         checkNotNull(url, "url cannot be null");
         forEachListenersOnError(mRequestListeners, url, e);
         forEachListenersOnError(mResponseListeners, url, e);
@@ -371,7 +423,6 @@ public final class ProgressManager {
         return addDiffRequestListenerOnSameUrl(originUrl, String.valueOf(SystemClock.elapsedRealtime() + listener.hashCode()), listener);
     }
 
-
     /**
      * 当出现需要使用同一个 {@code url} 根据 Post 请求参数的不同而上传不同资源的情况
      * 请使用 {@link #addDiffRequestListenerOnSameUrl(String, ProgressListener)} 代替 {@link #addRequestListener}
@@ -449,7 +500,6 @@ public final class ProgressManager {
         return location;
     }
 
-
     private void forEachListenersOnError(Map<String, List<ProgressListener>> map, String url, Exception e) {
         if (map.containsKey(url)) {
             List<ProgressListener> progressListeners = map.get(url);
@@ -458,12 +508,5 @@ public final class ProgressManager {
                 array[i].onError(-1, e);
             }
         }
-    }
-
-    static <T> T checkNotNull(T object, String message) {
-        if (object == null) {
-            throw new NullPointerException(message);
-        }
-        return object;
     }
 }
