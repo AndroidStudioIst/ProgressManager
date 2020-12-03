@@ -98,6 +98,9 @@ public final class ProgressManager {
         };
     }
 
+    public Interceptor getInterceptor() {
+        return mInterceptor;
+    }
 
     public static final ProgressManager getInstance() {
         if (mProgressManager == null) {
