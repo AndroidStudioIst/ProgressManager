@@ -87,7 +87,6 @@ public final class ProgressManager {
     private final Interceptor mInterceptor;
     private int mRefreshTime = DEFAULT_REFRESH_TIME; //进度刷新时间(单位ms),避免高频率调用
 
-
     private ProgressManager() {
         this.mHandler = new Handler(Looper.getMainLooper());
         this.mInterceptor = new Interceptor() {
@@ -98,8 +97,10 @@ public final class ProgressManager {
         };
     }
 
-    public Interceptor getInterceptor() {
-        return mInterceptor;
+    public static String newUrl(String url, String key) {
+        checkNotNull(url, "url cannot be null");
+        checkNotNull(key, "key cannot be null");
+        return url + IDENTIFICATION_NUMBER + key;
     }
 
     public static final ProgressManager getInstance() {
@@ -121,6 +122,10 @@ public final class ProgressManager {
             throw new NullPointerException(message);
         }
         return object;
+    }
+
+    public Interceptor getInterceptor() {
+        return mInterceptor;
     }
 
     /**
@@ -157,6 +162,13 @@ public final class ProgressManager {
         checkNotNull(url, "url cannot be null");
         synchronized (ProgressManager.class) {
             mRequestListeners.remove(url);
+        }
+    }
+
+    public void removeRequestListener(String url, String key) {
+        synchronized (ProgressManager.class) {
+            String newUrl = newUrl(url, key);
+            mRequestListeners.remove(newUrl);
         }
     }
 
@@ -201,6 +213,15 @@ public final class ProgressManager {
         checkNotNull(url, "url cannot be null");
         synchronized (ProgressManager.class) {
             mResponseListeners.remove(url);
+        }
+    }
+
+    public void removeResponseListener(String url, String key) {
+        checkNotNull(url, "url cannot be null");
+        checkNotNull(key, "key cannot be null");
+        synchronized (ProgressManager.class) {
+            String newUrl = newUrl(url, key);
+            mResponseListeners.remove(newUrl);
         }
     }
 
